@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Literal, Any
+from typing import Any, Literal
+
 from ollama import ChatResponse, chat
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
@@ -16,19 +17,21 @@ class Agent:
         self.system_prompt = system_prompt
         self.llm = llm
 
+    def build_message(self, user_content: str) -> list[dict[str, str]]:
+        messages = [
+            {"role": "system", "content": f"{self.system_prompt}"},
+            {"role": "user", "content": f"{user_content}"},
+        ]
+        return messages
+
     def ollama_chat(
         self,
-        user_input: str | Any | None,
+        messages: list[dict[str, str]],
         format: JsonSchemaValue | Literal["", "json"] | None = None,
         tools=None,
         thinking_mode: bool = True,
         stream_mode: bool = False,
     ) -> ChatResponse | Iterator[ChatResponse]:
-
-        messages = [
-            {"role": "system", "content": f"{self.system_prompt}"},
-            {"role": "user", "content": f"{user_input}"},
-        ]
 
         if stream_mode:
             response = chat(
@@ -56,12 +59,7 @@ class Agent:
             return response
 
 
-# class ToolRegister():
-#     def __init__(self, tool_name: str, description: str, ) -> None:
-#         pass
-
-
-async def list_vault() -> list[str]:
+def list_vault() -> list[str]:
     """
     list all file in obsidian vault
     """
@@ -72,46 +70,73 @@ async def list_vault() -> list[str]:
     return all_files
 
 
-# available_functions = {"list_vault": list_vault}
-
-
 def main():
-    agent = Agent(temp=0.1, system_prompt="you are a helpfull assistant")
-    context_agent = Agent(
-        temp=0.0,
-        system_prompt="""
-        you are agent for summarize context for another agent, intent the user question and use the available tools
-
-        only response laike this:
-
-        CONTEXT:
-            (summarize the context)
-        USER_QUESTION:
-            (pass the user question)
-        """,
+    available_functions = {"list_vault": list_vault}
+    agent = Agent(
+        temp=0.1,
+        system_prompt="you are a tool calling agent",
+        llm="qwen3.5:2b",
     )
-
     user_chat = str(input("test: "))
-
-    response_intent_agent = context_agent.ollama_chat(
-        user_input=user_chat,
-        stream_mode=False,
-        thinking_mode=False,
-        tools=[list_vault]
+    messages = agent.build_message(user_content=user_chat)
+    print(messages)
+    response_main_agent = agent.ollama_chat(
+        messages=messages, stream_mode=True, tools=[list_vault]
     )
-    response_main_agent = agent.ollama_chat(user_input=response_intent_agent.message.content, stream_mode=True)
-    for part in response_main_agent:
-        # if part.message.tool_calls:
-        #     for tool in part.message.tool_calls:
-        #         function_to_call = available_functions.get(tool.function.name)
-        #         if function_to_call:
-        #             print(f"\nCalling Tools {tool.function.name}")
-        #             return
-        #         else:
-        #             print(f"Function {tool.function.name} not found")
-        #             return
 
-        print(part.message.content, end="", flush=True)
+    tool_output = {
+        "role": "tool",
+        "content": "",
+        "tool_name": "",
+    }
+
+    for part in response_main_agent:
+        if part.message.thinking:
+            print(part.message.thinking, end="", flush=True)
+        if part.message.content:
+            print(part.message.content, end="", flush=True)
+        if part.message.tool_calls:
+            print("")
+            for tool in part.message.tool_calls:
+                if function_to_call := available_functions.get(tool.function.name):
+                    print(
+                        f"Calling function {tool.function.name} with argument {tool.function.arguments}"
+                    )
+                    output = function_to_call(**tool.function.arguments)
+                    print(f"Function output > {output} \n")
+                    messages.append(part.message)
+                    tool_output.update(
+                        {"content": f"{output}", "tool_name": f"{tool.function.name}"}
+                    )
+                else:
+                    print(f"Function {tool.function.name} not found")
+
+    messages.append(tool_output)
+    print(messages)
+    print("-" * 20, "Sending back to agent", "-" * 20)
+    if any(msg.get("role") == "tool" for msg in messages):
+        res_agent = Agent(temp=0.2, system_prompt="you are a helpfull assistant, answer the question with simple sentence", llm="qwen3.5:2b ")
+        res = response_main_agent = res_agent.ollama_chat(
+            messages=messages, stream_mode=True, tools=[list_vault], thinking_mode=False
+        )
+        done_thinking = False
+        for part in res:
+            if part.message.thinking:
+                print(part.message.thinking, end="", flush=True)
+            if part.message.content:
+                if not done_thinking:
+                    print("\n----- Final result:")
+                    done_thinking = True
+                print(part.message.content, end="", flush=True)
+            if part.message.tool_calls:
+                print("")
+                print("Model returned tool calls")
+                print(part.message.tool_calls)
+
+        print("="*20, "final messages", "="*20)
+        print(messages)
+    else:
+        print("No tool calls returned")
 
 
 if __name__ == "__main__":
