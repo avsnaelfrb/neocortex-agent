@@ -1,12 +1,14 @@
 from collections.abc import Iterator
 from pathlib import Path
+import subprocess
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
 from ollama import ChatResponse, Tool, chat
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 
-OBSIDIAN_PATH_DIR = Path().home() / "Documents" / "Exocortex"
+HOME_DIR = Path().home() 
+OBSIDIAN_PATH_DIR = HOME_DIR / "Documents" / "Exocortex"
 
 
 class Conversation:
@@ -63,6 +65,11 @@ class Agent:
 
 
 def list_vault() -> dict[str, list[str] | int]:
+    """
+    desc: list all files in obisidian vault user
+    output: list of string, string of files name
+    args: no arguments
+    """
     FILES_VAULT: list[str] = []
     for file in OBSIDIAN_PATH_DIR.iterdir():
         if not file.name.startswith(".") and not file.name.startswith("_"):
@@ -70,15 +77,28 @@ def list_vault() -> dict[str, list[str] | int]:
 
     return {"all_files": FILES_VAULT, "total_files": len(FILES_VAULT)}
 
+def search_file(keyword: str) -> list[str]:
+    """
+    desc: search files in obsidian vault user with one word argument
+    output: return list of result files if similar with keyword argument
+    args: one keyword for search file
+    """
+    process = subprocess.run(['fd', keyword, OBSIDIAN_PATH_DIR], capture_output=True, text=True).stdout
+    list = process.strip().split("\n")
+    clean_list = []
+    for item in list:
+        clean_list.append(Path(item).name)
+            
+    return clean_list
 
 def main():
-    available_functions = {"list_vault": list_vault}
+    available_functions = {"list_vault": list_vault, "search_file": search_file}
     agent_tool = Agent(
         temp=0.1,
         system_prompt="you are a tool calling agent",
         thingking_mode=False,
         stream_mode=True,
-        tools=[list_vault],
+        tools=[list_vault, search_file],
         llm="qwen3.5:2b",
     )
 
@@ -113,7 +133,7 @@ def main():
         agent_response = Agent(
             temp=0.2,
             system_prompt="you are a helpfull assistant",
-            thingking_mode=True,
+            thingking_mode=False,
             stream_mode=True,
             llm="qwen3.5:2b",
         )
@@ -131,8 +151,9 @@ def main():
                 print("")
                 print("Model returned tool calls")
                 print(part.message.tool_calls)
-        # print("\n", "=" * 20, "final messages", "=" * 20)
-        # print(messages.messages)
+                
+        print("\n", "=" * 20, "final messages", "=" * 20)
+        print(messages.messages)
     else:
         print("No tool calls returned")
 
