@@ -8,6 +8,7 @@ from pydantic.json_schema import JsonSchemaValue
 
 OBSIDIAN_PATH_DIR = Path().home() / "Documents" / "Exocortex"
 
+
 class Conversation:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
@@ -17,6 +18,11 @@ class Conversation:
 
     def add_assistant(self, content: str):
         self.messages.append({"role": "assistant", "content": content})
+
+    def add_tool(self, content: str, func_name, func_arg):
+        self.messages.append(
+            {"role": "tool", "content": content, "tool_calls": [{"function": {"name": func_name, "arguments": func_arg}}]}
+        )
 
 
 class OllamaClient:
@@ -32,7 +38,7 @@ class OllamaClient:
             format=agent.format,
             think=agent.thinking_mode,
             stream=agent.stream_mode,
-            tools=agent.tools
+            tools=agent.tools,
         )
 
 
@@ -56,15 +62,13 @@ class Agent:
         self.llm = llm
 
 
-def list_vault() -> list[str]:
-    """
-    list all file in obsidian vault
-    """
-    all_files: list[str] = []
-    for item in OBSIDIAN_PATH_DIR.iterdir():
-        if not item.name.startswith(".") and not item.name.startswith("_"):
-            all_files.append(item.name)
-    return all_files
+def list_vault() -> dict[str, list[str] | int]:
+    FILES_VAULT: list[str] = []
+    for file in OBSIDIAN_PATH_DIR.iterdir():
+        if not file.name.startswith(".") and not file.name.startswith("_"):
+            FILES_VAULT.append(file.name)
+
+    return {"all_files": FILES_VAULT, "total_files": len(FILES_VAULT)}
 
 
 def main():
@@ -75,76 +79,62 @@ def main():
         thingking_mode=False,
         stream_mode=True,
         tools=[list_vault],
-        format='json',
         llm="qwen3.5:2b",
     )
-    
+
     user_chat = str(input("test: "))
 
     messages = Conversation()
     messages.add_user(user_chat)
     print(messages.messages)
-    # response_main_agent = agent.ollama_chat(
-    #     messages=messages, stream_mode=True, tools=[list_vault]
-    # )
 
-    # tool_output = {
-    #     "role": "tool",
-    #     "content": "",
-    #     "tool_name": "",
-    # }
+    response = OllamaClient().generate(agent=agent_tool, conversation=messages)
 
-    # for part in response_main_agent:
-    #     if part.message.thinking:
-    #         print(part.message.thinking, end="", flush=True)
-    #     if part.message.content:
-    #         print(part.message.content, end="", flush=True)
-    #     if part.message.tool_calls:
-    #         print("")
-    #         for tool in part.message.tool_calls:
-    #             if function_to_call := available_functions.get(tool.function.name):
-    #                 print(
-    #                     f"Calling function {tool.function.name} with argument {tool.function.arguments}"
-    #                 )
-    #                 output = function_to_call(**tool.function.arguments)
-    #                 print(f"Function output > {output} \n")
-    #                 messages.append(part.message)
-    #                 tool_output.update(
-    #                     {"content": f"{output}", "tool_name": f"{tool.function.name}"}
-    #                 )
-    #             else:
-    #                 print(f"Function {tool.function.name} not found")
+    for part in response:
+        if part.message.thinking:
+            print(part.message.thinking, end="", flush=True)
+        if part.message.content:
+            print(part.message.content, end="", flush=True)
+        if part.message.tool_calls:
+            print(" ")
+            for tool in part.message.tool_calls:
+                if function_to_call := available_functions.get(tool.function.name):
+                    print(
+                        f"Calling function {tool.function.name} with argument {tool.function.arguments}"
+                    )
+                    output = function_to_call(**tool.function.arguments)
+                    print(f"\n----- Function output\n {output} \n")
+                    messages.add_tool(content=str(output), func_name=tool.function.name, func_arg=tool.function.arguments)
+                else:
+                    print(f"\nFunction {tool.function.name} not found\n")
 
-    # messages.append(tool_output)
-    # print(messages)
-    # print("-" * 20, "Sending back to agent", "-" * 20)
-    # if any(msg.get("role") == "tool" for msg in messages):
-    #     res_agent = Agent(
-    #         temp=0.2,
-    #         system_prompt="you are a helpfull assistant, answer the question with simple sentence",
-    #         llm="qwen3.5:2b",
-    #     )
-    #     res = response_main_agent = res_agent.ollama_chat(
-    #         messages=messages, stream_mode=True, tools=[list_vault], thinking_mode=False
-    #     )
-    #     done_thinking = False
-    #     for part in res:
-    #         if part.message.thinking:
-    #             print(part.message.thinking, end="", flush=True)
-    #         if part.message.content:
-    #             if not done_thinking:
-    #                 print("\n----- Final result:")
-    #                 done_thinking = True
-    #             print(part.message.content, end="", flush=True)
-    #         if part.message.tool_calls:
-    #             print("")
-    #             print("Model returned tool calls")
-    #             print(part.message.tool_calls)
-
-    #     print("=" * 20, "final messages", "=" * 20)
-    #     print(messages)
-    # else:
-    #     print("No tool calls returned")
+    if any(msg.get("role") == "tool" for msg in messages.messages):
+        print("-" * 20, "Sending back to agent", "-" * 20, "\n")
+        agent_response = Agent(
+            temp=0.2,
+            system_prompt="you are a helpfull assistant",
+            thingking_mode=True,
+            stream_mode=True,
+            llm="qwen3.5:2b",
+        )
+        res = OllamaClient().generate(agent=agent_response, conversation=messages)
+        done_thinking = False
+        for part in res:
+            if part.message.thinking:
+                print(part.message.thinking, end="", flush=True)
+            if part.message.content:
+                if not done_thinking:
+                    print("\n----- Final result:")
+                    done_thinking = True
+                print(part.message.content, end="", flush=True)
+            if part.message.tool_calls:
+                print("")
+                print("Model returned tool calls")
+                print(part.message.tool_calls)
+        # print("\n", "=" * 20, "final messages", "=" * 20)
+        # print(messages.messages)
+    else:
+        print("No tool calls returned")
 
 
 if __name__ == "__main__":
