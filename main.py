@@ -4,7 +4,6 @@ import subprocess
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
 from ollama import ChatResponse, Tool, chat
-from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 
 HOME_DIR = Path().home() 
@@ -26,6 +25,21 @@ class Conversation:
             {"role": "tool", "content": content, "tool_calls": [{"function": {"name": func_name, "arguments": func_arg}}]}
         )
 
+class StreamAccumulator:
+    def __init__(self) -> None:
+        self.content = ""
+        self.thinking = ""
+        self.tool_calls: list[dict[str, Any]] = []
+
+    def append_iter(self, chunk: Iterator[ChatResponse], available_tools: dict[str, Any]):
+        if chunk.message.thinking:
+            self.thinking += chunk.message.thinking
+            print(chunk.message.thinking, end="", flush=True)
+        if chunk.message.content:
+            self.content += chunk.message.content
+            print(chunk.message.thinking, end="", flush=True)
+        if chunk.message.tool_calls:
+            self.tool_calls.extend(chunk.message.tool_calls)
 
 class OllamaClient:
     def generate(self, agent: Agent, conversation: Conversation):
@@ -96,7 +110,7 @@ def main():
     agent_tool = Agent(
         temp=0.1,
         system_prompt="you are a tool calling agent",
-        thingking_mode=False,
+        thingking_mode=True,
         stream_mode=True,
         tools=[list_vault, search_file],
         llm="qwen3.5:2b",
@@ -110,23 +124,12 @@ def main():
 
     response = OllamaClient().generate(agent=agent_tool, conversation=messages)
 
+    result = StreamAccumulator()
     for part in response:
-        if part.message.thinking:
-            print(part.message.thinking, end="", flush=True)
-        if part.message.content:
-            print(part.message.content, end="", flush=True)
-        if part.message.tool_calls:
-            print(" ")
-            for tool in part.message.tool_calls:
-                if function_to_call := available_functions.get(tool.function.name):
-                    print(
-                        f"Calling function {tool.function.name} with argument {tool.function.arguments}"
-                    )
-                    output = function_to_call(**tool.function.arguments)
-                    print(f"\n----- Function output\n {output} \n")
-                    messages.add_tool(content=str(output), func_name=tool.function.name, func_arg=tool.function.arguments)
-                else:
-                    print(f"\nFunction {tool.function.name} not found\n")
+        result.append_iter(chunk=part, available_tools=available_functions)
+    print(result.content)
+    print(result.thinking)
+    print(result.tool_calls[0].function)
 
     if any(msg.get("role") == "tool" for msg in messages.messages):
         print("-" * 20, "Sending back to agent", "-" * 20, "\n")
