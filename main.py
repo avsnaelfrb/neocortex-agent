@@ -17,10 +17,10 @@ class Conversation:
     def add_user(self, content: str):
         self.messages.append({"role": "user", "content": content})
 
-    def add_assistant(self, content: str):
-        self.messages.append({"role": "assistant", "content": content})
+    def add_assistant(self, content: str, tool_calls: list[dict[str, Any]]):
+        self.messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
 
-    def add_tool(self, content: str, func_name, func_arg):
+    def add_tool(self, content: Any, func_name, func_arg):
         self.messages.append(
             {"role": "tool", "content": content, "tool_calls": [{"function": {"name": func_name, "arguments": func_arg}}]}
         )
@@ -31,13 +31,13 @@ class StreamAccumulator:
         self.thinking = ""
         self.tool_calls: list[dict[str, Any]] = []
 
-    def append_iter(self, chunk: Iterator[ChatResponse], available_tools: dict[str, Any]):
+    def append_iter(self, chunk: Iterator[ChatResponse]):
         if chunk.message.thinking:
             self.thinking += chunk.message.thinking
             print(chunk.message.thinking, end="", flush=True)
         if chunk.message.content:
             self.content += chunk.message.content
-            print(chunk.message.thinking, end="", flush=True)
+            print(chunk.message.content, end="", flush=True)
         if chunk.message.tool_calls:
             self.tool_calls.extend(chunk.message.tool_calls)
 
@@ -111,27 +111,35 @@ def main():
         temp=0.1,
         system_prompt="you are a tool calling agent",
         thingking_mode=True,
-        stream_mode=True,
+        stream_mode=False,
         tools=[list_vault, search_file],
         llm="qwen3.5:2b",
     )
-
-    user_chat = str(input("test: "))
+    print("-"*64)
+    user_chat = str(input("Send question :> "))
+    print("-"*64, "\n")
 
     messages = Conversation()
     messages.add_user(user_chat)
-    print(messages.messages)
+    # print(messages.messages)
 
     response = OllamaClient().generate(agent=agent_tool, conversation=messages)
 
-    result = StreamAccumulator()
-    for part in response:
-        result.append_iter(chunk=part, available_tools=available_functions)
-    print(result.content)
-    print(result.thinking)
-    print(result.tool_calls[0].function)
+    result = response.message
+    # result = StreamAccumulator()
+    # for part in response:
+    #     result.append_iter(chunk=part)
 
+    messages.add_assistant(content=str(result.content), tool_calls=result.tool_calls)
+
+    for tool in result.tool_calls:
+        if function_to_calls := available_functions.get(tool.function.name):
+            output_tool = function_to_calls(**tool.function.arguments)
+            messages.add_tool(content=str(output_tool), func_name=tool.function.name, func_arg=tool.function.arguments)
+            
+            
     if any(msg.get("role") == "tool" for msg in messages.messages):
+        print("\n")
         print("-" * 20, "Sending back to agent", "-" * 20, "\n")
         agent_response = Agent(
             temp=0.2,
@@ -141,22 +149,27 @@ def main():
             llm="qwen3.5:2b",
         )
         res = OllamaClient().generate(agent=agent_response, conversation=messages)
-        done_thinking = False
+        final_result = StreamAccumulator()
         for part in res:
-            if part.message.thinking:
-                print(part.message.thinking, end="", flush=True)
-            if part.message.content:
-                if not done_thinking:
-                    print("\n----- Final result:")
-                    done_thinking = True
-                print(part.message.content, end="", flush=True)
-            if part.message.tool_calls:
-                print("")
-                print("Model returned tool calls")
-                print(part.message.tool_calls)
+            final_result.append_iter(chunk=part)
+        messages.add_assistant(content=final_result.content, tool_calls=final_result.tool_calls) 
+            # if part.message.thinking:
+            #     print(part.message.thinking, end="", flush=True)
+            # if part.message.content:
+            #     if not done_thinking:
+            #         print("\n\n-------------- Final result --------------\n")
+            #         done_thinking = True
+            #     print(part.message.content, end="", flush=True)
+            # if part.message.tool_calls:
+            #     print("")
+            #     print("Model returned tool calls")
+            #     print(part.message.tool_calls)
                 
-        print("\n", "=" * 20, "final messages", "=" * 20)
+        # print("\n", "=" * 20, "final messages", "=" * 20)
+        # print(messages.messages)
+        print("\n-------------- Final Conversation -------------- ")
         print(messages.messages)
+        print("\nPanjang conversation: ",len(messages.messages))
     else:
         print("No tool calls returned")
 
