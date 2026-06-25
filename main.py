@@ -1,14 +1,10 @@
 from collections.abc import Iterator
 from pathlib import Path
-import subprocess
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
 from ollama import ChatResponse, Tool, chat
 from pydantic.json_schema import JsonSchemaValue
-
-HOME_DIR = Path().home() 
-OBSIDIAN_PATH_DIR = HOME_DIR / "Documents" / "Exocortex"
-
+from agent_tools import AgentTools
 
 class Conversation:
     def __init__(self) -> None:
@@ -57,7 +53,6 @@ class OllamaClient:
             tools=agent.tools,
         )
 
-
 class Agent:
     def __init__(
         self,
@@ -77,42 +72,15 @@ class Agent:
         self.format: JsonSchemaValue | Literal["", "json"] | None = format
         self.llm = llm
 
-
-def list_vault() -> dict[str, list[str] | int]:
-    """
-    desc: list all files in obisidian vault user
-    output: list of string, string of files name
-    args: no arguments
-    """
-    FILES_VAULT: list[str] = []
-    for file in OBSIDIAN_PATH_DIR.iterdir():
-        if not file.name.startswith(".") and not file.name.startswith("_"):
-            FILES_VAULT.append(file.name)
-
-    return {"all_files": FILES_VAULT, "total_files": len(FILES_VAULT)}
-
-def search_file(keyword: str) -> list[str]:
-    """
-    desc: search files in obsidian vault user with one word argument
-    output: return list of result files if similar with keyword argument
-    args: one keyword for search file
-    """
-    process = subprocess.run(['fd', keyword, OBSIDIAN_PATH_DIR], capture_output=True, text=True).stdout
-    list = process.strip().split("\n")
-    clean_list = []
-    for item in list:
-        clean_list.append(Path(item).name)
-            
-    return clean_list
-
 def main():
-    available_functions = {"list_vault": list_vault, "search_file": search_file}
+    tools = AgentTools()
+    available_functions = {"list_vault": tools.list_vault, "search_file": tools.search_file}
     agent_tool = Agent(
         temp=0.1,
         system_prompt="you are a tool calling agent",
         thingking_mode=True,
-        stream_mode=False,
-        tools=[list_vault, search_file],
+        stream_mode=True,
+        tools=[tools.list_vault, tools.search_file],
         llm="qwen3.5:2b",
     )
     print("-"*64)
@@ -125,10 +93,10 @@ def main():
 
     response = OllamaClient().generate(agent=agent_tool, conversation=messages)
 
-    result = response.message
-    # result = StreamAccumulator()
-    # for part in response:
-    #     result.append_iter(chunk=part)
+    # result = response.message # no stream
+    result = StreamAccumulator()
+    for part in response:
+        result.append_iter(chunk=part)
 
     messages.add_assistant(content=str(result.content), tool_calls=result.tool_calls)
 
@@ -136,7 +104,6 @@ def main():
         if function_to_calls := available_functions.get(tool.function.name):
             output_tool = function_to_calls(**tool.function.arguments)
             messages.add_tool(content=str(output_tool), func_name=tool.function.name, func_arg=tool.function.arguments)
-            
             
     if any(msg.get("role") == "tool" for msg in messages.messages):
         print("\n")
@@ -167,7 +134,7 @@ def main():
                 
         # print("\n", "=" * 20, "final messages", "=" * 20)
         # print(messages.messages)
-        print("\n-------------- Final Conversation -------------- ")
+        print("\n\n------------------- Final Conversation ------------------- \n")
         print(messages.messages)
         print("\nPanjang conversation: ",len(messages.messages))
     else:
