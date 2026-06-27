@@ -32,5 +32,3 @@ class AgentTools:
                 
         return clean_list
         
-    def available_tools(self):
-        return {"list_vault": self.list_vault, "search_file": self.search_file}
