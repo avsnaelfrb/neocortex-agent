@@ -1,10 +1,9 @@
 from collections.abc import Iterator
-from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
+from typing import Any
 
-from ollama import ChatResponse, Tool, chat
-from pydantic.json_schema import JsonSchemaValue
+from ollama import ChatResponse, chat
 from agent_tools import AgentTools
+from agents_core import Agent
 
 class Conversation:
     def __init__(self) -> None:
@@ -43,7 +42,7 @@ class OllamaClient:
 
         messages.extend(conversation.messages)
 
-        return chat(
+        result = chat(
             model=agent.llm,
             messages=messages,
             options={"temperature": agent.temp},
@@ -53,24 +52,13 @@ class OllamaClient:
             tools=agent.tools,
         )
 
-class Agent:
-    def __init__(
-        self,
-        temp: float,
-        system_prompt: str,
-        thingking_mode: bool,
-        stream_mode: bool,
-        tools: Optional[Sequence[Union[Mapping[str, Any], Tool, Callable]]] = None,
-        format: Optional[Union[Literal["", "json"], JsonSchemaValue]] = None,
-        llm: str = "lfm2.5:latest",
-    ) -> None:
-        self.temp = temp
-        self.system_prompt = system_prompt
-        self.thinking_mode = thingking_mode
-        self.stream_mode = stream_mode
-        self.tools = tools
-        self.format: JsonSchemaValue | Literal["", "json"] | None = format
-        self.llm = llm
+        if agent.stream_mode:
+            streamAcc = StreamAccumulator()
+            for part in result:
+                streamAcc.append_iter(part)
+            return (streamAcc.content, streamAcc.thinking, streamAcc.tool_calls)
+        else:
+            return result.message
 
 def main():
     while True:
@@ -92,18 +80,13 @@ def main():
             print("-"*64, "\n")
         
             messages.add_user(user_chat)
-            # print(messages.messages)
         
             response = OllamaClient().generate(agent=agent_tool, conversation=messages)
         
-            # result = response.message # no stream
-            result = StreamAccumulator()
-            for part in response:
-                result.append_iter(chunk=part)
+            content, thinking, tool_calls = response
+            messages.add_assistant(content=str(content), tool_calls=tool_calls)
         
-            messages.add_assistant(content=str(result.content), tool_calls=result.tool_calls)
-        
-            for tool in result.tool_calls:
+            for tool in tool_calls:
                 if function_to_calls := available_functions.get(tool.function.name):
                     output_tool = function_to_calls(**tool.function.arguments)
                     messages.add_tool(content=str(output_tool), func_name=tool.function.name, func_arg=tool.function.arguments)
@@ -119,24 +102,9 @@ def main():
                     llm="qwen3.5:0.8b",
                 )
                 res = OllamaClient().generate(agent=agent_response, conversation=messages)
-                final_result = StreamAccumulator()
-                for part in res:
-                    final_result.append_iter(chunk=part)
-                messages.add_assistant(content=final_result.content, tool_calls=final_result.tool_calls) 
-                    # if part.message.thinking:
-                    #     print(part.message.thinking, end="", flush=True)
-                    # if part.message.content:
-                    #     if not done_thinking:
-                    #         print("\n\n-------------- Final result --------------\n")
-                    #         done_thinking = True
-                    #     print(part.message.content, end="", flush=True)
-                    # if part.message.tool_calls:
-                    #     print("")
-                    #     print("Model returned tool calls")
-                    #     print(part.message.tool_calls)
-                        
-                # print("\n", "=" * 20, "final messages", "=" * 20)
-                # print(messages.messages)
+                content_res, thinking_res, tool_calls_res = res
+                messages.add_assistant(content=str(content_res), tool_calls=tool_calls_res) 
+
                 print("\n\n------------------- Final Conversation ------------------- \n")
                 print(messages.messages)
                 print("\nPanjang conversation: ",len(messages.messages))
