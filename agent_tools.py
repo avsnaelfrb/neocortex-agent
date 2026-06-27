@@ -31,4 +31,3 @@ class AgentTools:
             clean_list.append(Path(item).name)
                 
         return clean_list
-        
