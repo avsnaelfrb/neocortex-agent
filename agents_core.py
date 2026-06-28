@@ -4,7 +4,7 @@ from ollama import Tool
 from pydantic.json_schema import JsonSchemaValue
 
 
-class Agent:
+class InferenceProfile:
     def __init__(
         self,
         temp: float,
@@ -13,7 +13,7 @@ class Agent:
         stream_mode: bool,
         tools: Optional[Sequence[Union[Mapping[str, Any], Tool, Callable]]] = None,
         format: Optional[Union[Literal["", "json"], JsonSchemaValue]] = None,
-        llm: str = "lfm2.5:latest",
+        llm: str = "smollm2:1.7b",
     ) -> None:
         self.temp = temp
         self.system_prompt = system_prompt
