@@ -4,7 +4,7 @@ from typing import Any, Literal
 from ollama import ChatResponse, chat
 from pydantic import BaseModel
 
-from agent_tools import AgentTools
+from agent_tools import AgentTools, ToolRegistry
 from agents_core import InferenceProfile
 from logging_config import get_logger
 
@@ -83,17 +83,13 @@ def main():
 
     while True:
         try:
-            tools = AgentTools()
-            available_functions = {
-                "list_vault": tools.list_vault,
-                "search_file": tools.search_file,
-            }
+            availabe_tools = ToolRegistry(AgentTools())
             agent_tool = InferenceProfile(
                 temp=0.1,
                 system_prompt="you are a assistant agent with tool calling capabilities, answer with simple sentences.",
                 thingking_mode=False,
                 stream_mode=True,
-                tools=[tools.list_vault, tools.search_file],
+                tools=availabe_tools.ollama_tools(),
                 llm="qwen3.5:2b",
             )
             messages = Conversation()
@@ -119,7 +115,7 @@ def main():
             )
 
             for tool in tool_calls:
-                if function_to_calls := available_functions.get(tool.function.name):
+                if function_to_calls := availabe_tools.get(tool.function.name):
                     print(f"calling funtion tool {tool.function.name}\n")
                     logger.info(
                         "Calling tool %s with arguments %s",
@@ -137,7 +133,7 @@ def main():
                     )
 
             if any(msg.get("role") == "tool" for msg in messages.messages):
-                print("==> Sending back to agent <==\n")
+                print("====> Sending back <====\n")
 
                 res = OllamaClient().generate(profile=agent_tool, conversation=messages)
                 content_res, thinking_res, tool_calls_res = res
@@ -154,7 +150,7 @@ def main():
         except KeyboardInterrupt:
             logger.info("Application stopped by user")
             print("\n")
-            print("==> byee <==")
+            print("====> byee <====")
             break
         except Exception:
             logger.exception("Application stopped because of an unexpected error")
