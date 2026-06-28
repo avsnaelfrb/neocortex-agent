@@ -6,6 +6,10 @@ from pydantic import BaseModel
 
 from agent_tools import AgentTools
 from agents_core import InferenceProfile
+from logging_config import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class Conversation:
@@ -75,6 +79,8 @@ class OllamaClient:
 
 
 def main():
+    logger.info("Application started")
+
     while True:
         try:
             tools = AgentTools()
@@ -84,7 +90,7 @@ def main():
             }
             agent_tool = InferenceProfile(
                 temp=0.1,
-                system_prompt="you are a tool calling agent, answer with simple sentences.",
+                system_prompt="you are a assistant agent with tool calling capabilities, answer with simple sentences.",
                 thingking_mode=False,
                 stream_mode=True,
                 tools=[tools.list_vault, tools.search_file],
@@ -92,23 +98,38 @@ def main():
             )
             messages = Conversation()
 
-            print("-" * 64)
+            print("\n")
+            print("-"*64)
             user_chat = str(input("Send question :> "))
-            print("-" * 64, "\n")
+            print("-"*64,"\n")
+
+            messages.add_user(user_chat)
+            logger.info("User input received: %s", user_chat)
 
             response = OllamaClient().generate(
                 profile=agent_tool, conversation=messages
             )
 
-            messages.add_user(user_chat)
-
             content, thinking, tool_calls = response
             messages.add_assistant(content=str(content), tool_calls=tool_calls)
+            logger.info(
+                "Agent response received (content_length=%d, tool_calls=%d)",
+                len(str(content)),
+                len(tool_calls),
+            )
 
             for tool in tool_calls:
                 if function_to_calls := available_functions.get(tool.function.name):
-                    print(f"calling funtion tool {tool.function.name}")
+                    print(f"calling funtion tool {tool.function.name}\n")
+                    logger.info(
+                        "Calling tool %s with arguments %s",
+                        tool.function.name,
+                        tool.function.arguments,
+                    )
                     output_tool = function_to_calls(**tool.function.arguments)
+                    logger.debug(
+                        "Tool %s returned: %s", tool.function.name, output_tool
+                    )
                     messages.add_tool(
                         content=str(output_tool),
                         func_name=tool.function.name,
@@ -116,25 +137,28 @@ def main():
                     )
 
             if any(msg.get("role") == "tool" for msg in messages.messages):
-                print("\n")
-                print("-" * 20, "Sending back to agent", "-" * 20, "\n")
+                print("==> Sending back to agent <==\n")
 
                 res = OllamaClient().generate(profile=agent_tool, conversation=messages)
                 content_res, thinking_res, tool_calls_res = res
                 messages.add_assistant(
                     content=str(content_res), tool_calls=tool_calls_res
                 )
-
-                print(
-                    "\n\n------------------- Final Conversation ------------------- \n"
+                logger.info(
+                    "Final agent response received (content_length=%d)",
+                    len(str(content_res)),
                 )
-                print(messages.messages)
-                print("\nPanjang conversation: ", len(messages.messages))
+
             else:
-                print("\n\nNo tool calls returned")
+                logger.info("Agent response completed without tool calls")
         except KeyboardInterrupt:
-            print("\n\nbyee -----")
+            logger.info("Application stopped by user")
+            print("\n")
+            print("==> byee <==")
             break
+        except Exception:
+            logger.exception("Application stopped because of an unexpected error")
+            raise
 
 
 if __name__ == "__main__":
