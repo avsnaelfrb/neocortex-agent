@@ -59,7 +59,7 @@ class OllamaClient:
 
         messages.extend(conversation.messages)
 
-        result = chat(
+        result: Iterator[ChatResponse] | ChatResponse = chat(
             model=profile.llm,
             messages=messages,
             options={"temperature": profile.temp},

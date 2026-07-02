@@ -12,3 +12,5 @@ wheels/
 # Runtime logs
 logs/*.log
 logs/*.log.*
+
+test/
